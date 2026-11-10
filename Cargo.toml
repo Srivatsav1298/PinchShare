@@ -1,0 +1,7 @@
+[workspace]
+resolver = "2"
+members = ["apps/desktop/core"]
+
+[workspace.package]
+license = "MIT"
+edition = "2021"

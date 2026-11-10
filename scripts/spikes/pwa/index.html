@@ -1,0 +1,15 @@
+<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1,user-scalable=no">
+<title>Pinch spike</title>
+<style>body{font:16px system-ui;margin:0}#pad{height:55vh;background:#e8eefc;touch-action:none;display:flex;align-items:center;justify-content:center;font-size:22px;user-select:none}
+pre{padding:12px;margin:0;white-space:pre-wrap}</style>
+<div id=pad>Pinch / spread here</div><pre id=log>UA: </pre>
+<script>
+const log=document.getElementById('log'),pad=document.getElementById('pad');log.textContent='UA: '+navigator.userAgent+'\nsecureContext: '+isSecureContext+'\n';
+const pts=new Map();let d0=0;const dist=()=>{const [a,b]=[...pts.values()];return Math.hypot(a.x-b.x,a.y-b.y)};
+pad.addEventListener('pointerdown',e=>{pts.set(e.pointerId,{x:e.clientX,y:e.clientY});if(pts.size==2)d0=dist()});
+pad.addEventListener('pointermove',e=>{if(pts.has(e.pointerId))pts.set(e.pointerId,{x:e.clientX,y:e.clientY})});
+function end(e){if(pts.size==2){const r=dist()/d0;const v=r<0.75?'PINCH-IN':r>1.33?'SPREAD-OUT':'small';log.textContent+=v+' ratio='+r.toFixed(2)+' (pointer events)\n'}pts.delete(e.pointerId)}
+pad.addEventListener('pointerup',end);pad.addEventListener('pointercancel',e=>{log.textContent+='pointercancel\n';pts.delete(e.pointerId)});
+// iOS Safari proprietary gesture events (fallback check)
+pad.addEventListener('gestureend',e=>{log.textContent+='gestureend scale='+e.scale.toFixed(2)+' (iOS gesture)\n'});
+</script>

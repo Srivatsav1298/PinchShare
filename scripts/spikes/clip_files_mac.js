@@ -1,0 +1,22 @@
+// Spike B (macOS, JXA): file-list / text / image clipboard round trip via NSPasteboard.
+ObjC.import('AppKit');
+const fm = $.NSFileManager.defaultManager;
+const dir = '/private/tmp/pinchspike';
+fm.createDirectoryAtPathWithIntermediateDirectoriesAttributesError(dir, true, $(), $());
+['a.txt','b.png'].forEach(n => $('x').writeToFileAtomicallyEncodingError(dir+'/'+n, true, $.NSUTF8StringEncoding, $()));
+fm.createDirectoryAtPathWithIntermediateDirectoriesAttributesError(dir+'/folder', true, $(), $());
+const urls = $.NSMutableArray.array;
+['a.txt','b.png','folder'].forEach(n => urls.addObject($.NSURL.fileURLWithPath(dir+'/'+n)));
+const pb = $.NSPasteboard.generalPasteboard;
+pb.clearContents;
+const out = {};
+out.writeFiles = pb.writeObjects(urls);
+const back = pb.readObjectsForClassesOptions($([$.NSURL]), $({NSPasteboardURLReadingFileURLsOnlyKey: true}));
+out.readBack = ObjC.deepUnwrap(back.valueForKey('lastPathComponent'));
+out.types = ObjC.deepUnwrap(pb.types);
+pb.clearContents; pb.setStringForType('hello', 'public.utf8-plain-text');
+out.text = ObjC.unwrap(pb.stringForType('public.utf8-plain-text'));
+const img = $.NSImage.alloc.initWithSize({width:4,height:4}); img.lockFocus; $.NSColor.redColor.set; $.NSBezierPath.fillRect({origin:{x:0,y:0},size:{width:4,height:4}}); img.unlockFocus;
+pb.clearContents; out.imageWrite = pb.writeObjects($([img]));
+out.imageTypes = ObjC.deepUnwrap(pb.types);
+JSON.stringify(out, null, 1);
