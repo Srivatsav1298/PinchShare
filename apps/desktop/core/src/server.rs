@@ -4,11 +4,11 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use axum::body::Body;
-use axum::extract::{OriginalUri, Request, State};
+use axum::extract::{DefaultBodyLimit, OriginalUri, Request, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::Response;
-use axum::routing::{get, post};
+use axum::routing::{delete, get, post, put};
 use axum::{Extension, Json, Router};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::UnboundedSender;
@@ -16,6 +16,7 @@ use tokio::sync::mpsc::UnboundedSender;
 use crate::crypto::{self, PairKeys};
 use crate::identity::Identity;
 use crate::store::{PairedDevice, Store};
+use crate::transfer::{self, Transfers};
 
 pub const MAX_BODY: usize = 8 * 1024 * 1024;
 pub const MAX_SKEW_SECS: u64 = 60;
@@ -25,6 +26,10 @@ const MAX_PAIR_ATTEMPTS: u8 = 3;
 #[derive(Debug, Clone)]
 pub enum Incoming {
     Text { from_id: String, from_name: String, text: String },
+    /// Receive progress for an in-flight file/folder transfer.
+    Progress { transfer_id: String, from_id: String, name: String, received: u64, total: u64 },
+    /// A file or folder was fully received, verified, and saved at `path`.
+    File { from_id: String, from_name: String, path: std::path::PathBuf, size: u64, is_folder: bool },
 }
 
 struct Pending {
@@ -45,11 +50,19 @@ pub struct Shared {
     pub pairing: Mutex<Option<PairingSession>>,
     nonces: Mutex<HashMap<String, Instant>>,
     pub tx: UnboundedSender<Incoming>,
+    pub save_dir: std::path::PathBuf,
+    pub part_dir: std::path::PathBuf,
+    pub transfers: Transfers,
+    pub finalize_lock: tokio::sync::Mutex<()>,
 }
 
 impl Shared {
-    pub fn new(identity: Identity, store: Arc<Store>, tx: UnboundedSender<Incoming>) -> Shared {
-        Shared { identity, store, pairing: Mutex::new(None), nonces: Mutex::new(HashMap::new()), tx }
+    pub fn new(identity: Identity, store: Arc<Store>, tx: UnboundedSender<Incoming>, save_dir: std::path::PathBuf) -> Shared {
+        let part_dir = save_dir.join(".pinchshare-partial");
+        Shared {
+            identity, store, pairing: Mutex::new(None), nonces: Mutex::new(HashMap::new()), tx,
+            save_dir, part_dir, transfers: Mutex::new(HashMap::new()), finalize_lock: tokio::sync::Mutex::new(()),
+        }
     }
 
     pub fn begin_pairing(&self, ttl: Duration) -> String {
@@ -82,12 +95,17 @@ pub struct TextReq { pub text: String }
 pub struct PingResp { pub id: String, pub name: String }
 
 #[derive(Clone)]
-struct Authed(PairedDevice);
+pub struct Authed(pub PairedDevice);
 
 pub fn router(shared: Arc<Shared>) -> Router {
     let api = Router::new()
         .route("/ping", get(ping))
         .route("/text", post(text))
+        .route("/transfer/init", post(transfer::init))
+        .route("/transfer/{id}/chunk/{offset}", put(transfer::chunk))
+        .route("/transfer/{id}/finish", post(transfer::finish))
+        .route("/transfer/{id}", delete(transfer::cancel))
+        .layer(DefaultBodyLimit::max(MAX_BODY))
         .layer(middleware::from_fn_with_state(shared.clone(), auth));
     Router::new()
         .route("/pair/start", post(pair_start))

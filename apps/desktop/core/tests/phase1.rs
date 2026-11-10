@@ -11,10 +11,20 @@ async fn node(name: &str, mdns: bool) -> (Node, UnboundedReceiver<Incoming>, tem
         device_name: name.into(),
         bind: if mdns { "0.0.0.0:0" } else { "127.0.0.1:0" }.parse::<SocketAddr>().unwrap(),
         mdns,
+        save_dir: Some(dir.path().join("recv")),
     })
     .await
     .unwrap();
     (n, rx, dir)
+}
+
+async fn next_text(rx: &mut UnboundedReceiver<Incoming>) -> Incoming {
+    loop {
+        let ev = rx.recv().await.unwrap();
+        if matches!(ev, Incoming::Text { .. }) {
+            return ev;
+        }
+    }
 }
 
 async fn paired_pair() -> (Node, UnboundedReceiver<Incoming>, Node, UnboundedReceiver<Incoming>, Vec<tempfile::TempDir>) {
@@ -31,16 +41,17 @@ async fn pair_then_send_text_both_directions() {
     let (a, mut arx, b, mut brx, _d) = paired_pair().await;
     // Beta -> Alpha
     b.send_text_to(a.addr, &a.identity.device_id, "héllo 🌍 from beta").await.unwrap();
-    match arx.recv().await.unwrap() {
+    match next_text(&mut arx).await {
         Incoming::Text { from_name, text, from_id } => {
             assert_eq!(text, "héllo 🌍 from beta");
             assert_eq!(from_name, "Beta");
             assert_eq!(from_id, b.identity.device_id);
         }
+        _ => unreachable!(),
     }
     // Alpha -> Beta (host learned the client's pinned cert during pairing)
     a.send_text_to(b.addr, &b.identity.device_id, "reply").await.unwrap();
-    let Incoming::Text { text, .. } = brx.recv().await.unwrap();
+    let Incoming::Text { text, .. } = next_text(&mut brx).await else { unreachable!() };
     assert_eq!(text, "reply");
 }
 
@@ -178,7 +189,7 @@ async fn mdns_discovery_and_send_by_id() {
     }
     assert!(found, "Beta never discovered Alpha via mDNS; peers={:?}", b.peers());
     b.send_text(&id, "via mdns").await.unwrap();
-    let Incoming::Text { text, .. } = arx.recv().await.unwrap();
+    let Incoming::Text { text, .. } = next_text(&mut arx).await else { unreachable!() };
     assert_eq!(text, "via mdns");
     a.shutdown(); b.shutdown();
 }

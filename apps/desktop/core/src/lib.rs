@@ -3,10 +3,13 @@ pub mod client;
 pub mod crypto;
 pub mod discovery;
 pub mod error;
+pub mod files;
 pub mod identity;
+pub mod send;
 pub mod server;
 pub mod store;
 pub mod tls;
+pub mod transfer;
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -17,6 +20,7 @@ use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver};
 
 pub use discovery::Peer;
 pub use error::{Error, Result};
+pub use send::{Phase, Progress, SendOptions, TransferStats};
 pub use server::Incoming;
 pub use store::PairedDevice;
 
@@ -24,6 +28,8 @@ pub struct NodeConfig {
     pub data_dir: PathBuf,
     pub device_name: String,
     pub bind: SocketAddr,
+    /// Where received files are saved. `None` = ~/Downloads/PinchShare.
+    pub save_dir: Option<PathBuf>,
     /// Advertise and browse over mDNS (tests on loopback turn this off).
     pub mdns: bool,
 }
@@ -43,7 +49,11 @@ impl Node {
         let identity = identity::Identity::load_or_create(&cfg.data_dir, &cfg.device_name)?;
         let store = Arc::new(store::Store::open(&cfg.data_dir)?);
         let (tx, rx) = unbounded_channel();
-        let shared = Arc::new(server::Shared::new(identity.clone(), store.clone(), tx));
+        let save_dir = cfg.save_dir.clone().unwrap_or_else(files::default_save_dir);
+        // Partial downloads do not survive a restart; clear any leftovers.
+        let _ = std::fs::remove_dir_all(save_dir.join(".pinchshare-partial"));
+        std::fs::create_dir_all(save_dir.join(".pinchshare-partial"))?;
+        let shared = Arc::new(server::Shared::new(identity.clone(), store.clone(), tx, save_dir));
 
         let rustls_cfg = axum_server::tls_rustls::RustlsConfig::from_pem(
             identity.cert_pem.clone().into_bytes(),
@@ -85,20 +95,42 @@ impl Node {
         self.discovery.as_ref().map(|d| d.peers()).unwrap_or_default()
     }
 
-    pub async fn send_text_to(&self, addr: SocketAddr, device_id: &str, text: &str) -> Result<()> {
+    fn session(&self, addr: SocketAddr, device_id: &str) -> Result<client::Session> {
         let peer = self.store.get(device_id).ok_or(Error::NotPaired)?;
-        client::send_text(addr, &self.identity, &peer, text).await
+        client::Session::new(addr, &self.identity, &peer)
+    }
+
+    fn addr_of(&self, device_id: &str) -> Result<SocketAddr> {
+        self.discovery.as_ref().and_then(|d| d.find(device_id)).and_then(|p| p.socket_addr()).ok_or(Error::PeerNotFound)
+    }
+
+    pub async fn send_text_to(&self, addr: SocketAddr, device_id: &str, text: &str) -> Result<()> {
+        self.session(addr, device_id)?.send_text(text).await
+    }
+
+    /// Send a file or folder to a paired device at a known address.
+    pub async fn send_path_to(&self, addr: SocketAddr, device_id: &str, path: &std::path::Path, opts: &SendOptions) -> Result<TransferStats> {
+        send::send_path(&self.session(addr, device_id)?, path, opts).await
+    }
+
+    /// Send several files/folders one after another (stops at the first error or cancel).
+    pub async fn send_paths_to(&self, addr: SocketAddr, device_id: &str, paths: &[PathBuf], opts: &SendOptions) -> Result<Vec<TransferStats>> {
+        let session = self.session(addr, device_id)?;
+        let mut out = Vec::new();
+        for p in paths {
+            out.push(send::send_path(&session, p, opts).await?);
+        }
+        Ok(out)
+    }
+
+    /// Like `send_path_to`, locating the device via mDNS.
+    pub async fn send_path(&self, device_id: &str, path: &std::path::Path, opts: &SendOptions) -> Result<TransferStats> {
+        self.send_path_to(self.addr_of(device_id)?, device_id, path, opts).await
     }
 
     /// Send to a paired device found via mDNS.
     pub async fn send_text(&self, device_id: &str, text: &str) -> Result<()> {
-        let addr = self
-            .discovery
-            .as_ref()
-            .and_then(|d| d.find(device_id))
-            .and_then(|p| p.socket_addr())
-            .ok_or(Error::PeerNotFound)?;
-        self.send_text_to(addr, device_id, text).await
+        self.send_text_to(self.addr_of(device_id)?, device_id, text).await
     }
 
     pub fn unpair_all(&self) -> Result<()> {

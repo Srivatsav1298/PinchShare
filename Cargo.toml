@@ -5,3 +5,7 @@ members = ["apps/desktop/core"]
 [workspace.package]
 license = "MIT"
 edition = "2021"
+
+# Compile dependencies optimised even in debug builds: SHA-256/TLS/zip are far too slow otherwise.
+[profile.dev.package."*"]
+opt-level = 3

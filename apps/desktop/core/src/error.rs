@@ -18,6 +18,12 @@ pub enum Error {
     PeerNotFound,
     #[error("rejected by peer: {0}")]
     Rejected(String),
+    #[error("transfer cancelled")]
+    Cancelled,
+    #[error("checksum mismatch: {0}")]
+    Checksum(String),
+    #[error("unsafe or invalid archive: {0}")]
+    Archive(String),
     #[error("crypto: {0}")]
     Crypto(String),
 }
