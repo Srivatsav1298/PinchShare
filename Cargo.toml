@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["apps/desktop/core"]
+members = ["apps/desktop/core", "apps/desktop/src-tauri"]
 
 [workspace.package]
 license = "MIT"

@@ -123,6 +123,11 @@ impl Controller {
         });
     }
 
+    /// Start a pairing offer other devices can join; returns the 6-digit code to display.
+    pub fn show_pairing_code(&self) -> String {
+        self.node.begin_pairing(Duration::from_secs(120))
+    }
+
     pub fn clear_slot(&self) {
         self.node.clear_slot();
     }

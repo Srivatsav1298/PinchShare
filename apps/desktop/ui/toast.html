@@ -1,0 +1,40 @@
+<!doctype html>
+<meta charset="utf-8">
+<style>
+  :root { color-scheme: dark; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #1c1c1e; font: 14px -apple-system, "Segoe UI", system-ui, sans-serif; color: #f2f2f7; }
+  #wrap { display: flex; align-items: center; gap: 12px; height: 100%; padding: 0 16px; box-sizing: border-box; position: relative; }
+  #text { flex: 1; line-height: 1.3; }
+  button { background: #3a3a3c; color: #f2f2f7; border: 0; border-radius: 8px; padding: 6px 12px; font: inherit; cursor: pointer; }
+  button:hover { background: #4a4a4d; }
+  #bar { position: absolute; left: 0; bottom: 0; height: 3px; background: #0a84ff; width: 100%; }
+  #wrap.error #text { color: #ff9f0a; }
+  [hidden] { display: none !important; }
+</style>
+<div id="wrap">
+  <div id="text"></div>
+  <button id="cancel" hidden>Cancel</button>
+  <div id="bar" hidden></div>
+</div>
+<script>
+  const { listen } = window.__TAURI__.event;
+  const { invoke } = window.__TAURI__.core;
+  const $ = (id) => document.getElementById(id);
+  $("cancel").addEventListener("click", () => invoke("cancel_paste"));
+  listen("toast", ({ payload: m }) => {
+    $("wrap").className = m.kind;
+    $("text").textContent = m.text;
+    $("cancel").hidden = !m.cancellable;
+    const bar = $("bar");
+    bar.hidden = !(m.countdown_ms > 0) && m.progress == null;
+    bar.style.transition = "none";
+    if (m.countdown_ms > 0) {
+      bar.style.width = "100%";
+      void bar.offsetWidth;
+      bar.style.transition = `width ${m.countdown_ms}ms linear`;
+      bar.style.width = "0%";
+    } else if (m.progress != null) {
+      bar.style.width = Math.round(m.progress * 100) + "%";
+    }
+  });
+</script>

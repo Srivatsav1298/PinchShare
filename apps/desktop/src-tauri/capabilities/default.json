@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Toast window: receive events and call our own commands.",
+  "windows": ["toast"],
+  "permissions": ["core:default"]
+}

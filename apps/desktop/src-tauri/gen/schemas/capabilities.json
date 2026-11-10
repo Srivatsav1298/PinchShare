@@ -1,0 +1,1 @@
+{"default":{"identifier":"default","description":"Toast window: receive events and call our own commands.","local":true,"windows":["toast"],"permissions":["core:default"]}}

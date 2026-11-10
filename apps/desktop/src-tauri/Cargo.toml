@@ -1,0 +1,28 @@
+[package]
+name = "pinchshare-desktop"
+version = "0.1.0"
+license.workspace = true
+edition.workspace = true
+
+[build-dependencies]
+tauri-build = "2"
+
+[dependencies]
+pinchshare-core = { path = "../core" }
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
+tauri-plugin-global-shortcut = "2"
+clipboard-rs = "0.3"
+enigo = "0.5"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
+dirs = "7"
+tracing = "0.1"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", features = ["NSEvent", "NSResponder"] }
+block2 = "0.6"
+
+[dev-dependencies]
+tempfile = "3"
