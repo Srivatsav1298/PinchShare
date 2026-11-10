@@ -16,6 +16,7 @@ use tokio::sync::mpsc::UnboundedSender;
 use crate::crypto::{self, PairKeys};
 use crate::identity::Identity;
 use crate::store::{PairedDevice, Store};
+use crate::slot::ReadySlot;
 use crate::transfer::{self, Transfers};
 
 pub const MAX_BODY: usize = 8 * 1024 * 1024;
@@ -54,6 +55,8 @@ pub struct Shared {
     pub part_dir: std::path::PathBuf,
     pub transfers: Transfers,
     pub finalize_lock: tokio::sync::Mutex<()>,
+    pub slot: Mutex<Option<ReadySlot>>,
+    pub slot_gen: std::sync::atomic::AtomicU64,
 }
 
 impl Shared {
@@ -62,6 +65,7 @@ impl Shared {
         Shared {
             identity, store, pairing: Mutex::new(None), nonces: Mutex::new(HashMap::new()), tx,
             save_dir, part_dir, transfers: Mutex::new(HashMap::new()), finalize_lock: tokio::sync::Mutex::new(()),
+            slot: Mutex::new(None), slot_gen: Default::default(),
         }
     }
 
@@ -101,6 +105,8 @@ pub fn router(shared: Arc<Shared>) -> Router {
     let api = Router::new()
         .route("/ping", get(ping))
         .route("/text", post(text))
+        .route("/slot", get(crate::pull::info))
+        .route("/slot/pull", post(crate::pull::pull))
         .route("/transfer/init", post(transfer::init))
         .route("/transfer/{id}/chunk/{offset}", put(transfer::chunk))
         .route("/transfer/{id}/finish", post(transfer::finish))

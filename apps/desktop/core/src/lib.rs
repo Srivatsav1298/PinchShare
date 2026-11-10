@@ -1,11 +1,15 @@
 //! PinchShare core: discovery, pairing, and encrypted transfer between paired devices.
 pub mod client;
+pub mod controller;
 pub mod crypto;
 pub mod discovery;
 pub mod error;
 pub mod files;
 pub mod identity;
+pub mod metrics;
+pub mod pull;
 pub mod send;
+pub mod slot;
 pub mod server;
 pub mod store;
 pub mod tls;
@@ -13,7 +17,9 @@ pub mod transfer;
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::atomic::Ordering;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver};
@@ -41,6 +47,8 @@ pub struct Node {
     shared: Arc<server::Shared>,
     handle: axum_server::Handle<SocketAddr>,
     discovery: Option<discovery::Discovery>,
+    /// Manually known addresses (tests, "connect by IP"); take precedence over mDNS.
+    static_peers: Mutex<HashMap<String, SocketAddr>>,
 }
 
 impl Node {
@@ -71,11 +79,11 @@ impl Node {
             let _ = axum_server::from_tcp_rustls(listener, rustls_cfg)
                 .expect("listener")
                 .handle(h2)
-                .serve(app.into_make_service())
+                .serve(app.into_make_service_with_connect_info::<SocketAddr>())
                 .await;
         });
         let discovery = if cfg.mdns { Some(discovery::Discovery::start(&identity.device_id, &identity.name, addr.port())?) } else { None };
-        Ok((Node { identity, store, addr, shared, handle, discovery }, rx))
+        Ok((Node { identity, store, addr, shared, handle, discovery, static_peers: Mutex::default() }, rx))
     }
 
     /// Start showing a 6-digit code; another device can pair with it until it expires.
@@ -95,12 +103,15 @@ impl Node {
         self.discovery.as_ref().map(|d| d.peers()).unwrap_or_default()
     }
 
-    fn session(&self, addr: SocketAddr, device_id: &str) -> Result<client::Session> {
+    pub fn session(&self, addr: SocketAddr, device_id: &str) -> Result<client::Session> {
         let peer = self.store.get(device_id).ok_or(Error::NotPaired)?;
         client::Session::new(addr, &self.identity, &peer)
     }
 
-    fn addr_of(&self, device_id: &str) -> Result<SocketAddr> {
+    pub fn addr_of(&self, device_id: &str) -> Result<SocketAddr> {
+        if let Some(a) = self.static_peers.lock().unwrap().get(device_id) {
+            return Ok(*a);
+        }
         self.discovery.as_ref().and_then(|d| d.find(device_id)).and_then(|p| p.socket_addr()).ok_or(Error::PeerNotFound)
     }
 
@@ -131,6 +142,25 @@ impl Node {
     /// Send to a paired device found via mDNS.
     pub async fn send_text(&self, device_id: &str, text: &str) -> Result<()> {
         self.send_text_to(self.addr_of(device_id)?, device_id, text).await
+    }
+
+    pub fn set_peer_addr(&self, device_id: &str, addr: SocketAddr) {
+        self.static_peers.lock().unwrap().insert(device_id.to_string(), addr);
+    }
+
+    /// Fill the ready slot; returns a generation number identifying this fill.
+    pub fn set_slot(&self, content: slot::SlotContent, ttl: Duration, trigger: slot::Trigger) -> u64 {
+        let gen = self.shared.slot_gen.fetch_add(1, Ordering::SeqCst) + 1;
+        *self.shared.slot.lock().unwrap() = Some(slot::ReadySlot::new(content, ttl, trigger, gen));
+        gen
+    }
+
+    pub fn slot_generation(&self) -> Option<u64> {
+        self.shared.slot.lock().unwrap().as_ref().map(|s| s.generation)
+    }
+
+    pub fn clear_slot(&self) {
+        *self.shared.slot.lock().unwrap() = None;
     }
 
     pub fn unpair_all(&self) -> Result<()> {

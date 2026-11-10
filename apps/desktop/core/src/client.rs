@@ -5,6 +5,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use crate::crypto;
 use crate::error::{Error, Result};
 use crate::identity::Identity;
+use crate::slot::{PullReq, SlotInfo};
 use crate::server::{ConfirmReq, ConfirmResp, PingResp, StartReq, StartResp, TextReq};
 use crate::store::{PairedDevice, Store};
 use crate::tls::PinVerifier;
@@ -112,6 +113,16 @@ impl Session {
 
     pub async fn send_text(&self, text: &str) -> Result<()> {
         self.ok(reqwest::Method::POST, "/v1/text", serde_json::to_vec(&TextReq { text: text.to_string() })?).await?;
+        Ok(())
+    }
+
+    pub async fn slot_info(&self) -> Result<SlotInfo> {
+        Ok(serde_json::from_slice(&self.ok(reqwest::Method::GET, "/v1/slot", Vec::new()).await?)?)
+    }
+
+    /// Ask the peer to push its ready slot to our server on `my_port`.
+    pub async fn pull(&self, my_port: u16) -> Result<()> {
+        self.ok(reqwest::Method::POST, "/v1/slot/pull", serde_json::to_vec(&PullReq { port: my_port })?).await?;
         Ok(())
     }
 }
